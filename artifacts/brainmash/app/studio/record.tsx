@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { WaveformVisualizer } from "@/components/WaveformVisualizer";
+import { LiveWaveformVisualizer } from "@/components/LiveWaveformVisualizer";
 import { useColors } from "@/hooks/useColors";
 import { useStudio } from "@/context/StudioContext";
 
@@ -27,6 +27,9 @@ export default function RecordScreen() {
   const [seconds, setSeconds] = useState(0);
   const [done, setDone] = useState(false);
   const [permissionError, setPermissionError] = useState(false);
+  // Live mic data passed to the visualizer
+  const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
+  const [liveRecording, setLiveRecording] = useState<Audio.Recording | null>(null);
 
   // Native (expo-av)
   const avRecordingRef = useRef<Audio.Recording | null>(null);
@@ -93,12 +96,14 @@ export default function RecordScreen() {
         const url = URL.createObjectURL(blob);
         setAudioFile({ name: "My Recording", duration: dur, uri: url, source: "recorded" });
         setDone(true);
+        setLiveStream(null);
         streamRef.current?.getTracks().forEach((t: any) => t.stop());
         streamRef.current = null;
       };
       mr.start();
       mediaRecorderRef.current = mr;
       startTimeRef.current = Date.now();
+      setLiveStream(stream);
       setRecording(true);
       setDone(false);
       setSeconds(0);
@@ -110,6 +115,7 @@ export default function RecordScreen() {
 
   const stopRecordingWeb = () => {
     setRecording(false);
+    setLiveStream(null);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
@@ -123,12 +129,14 @@ export default function RecordScreen() {
       const { granted } = await Audio.requestPermissionsAsync();
       if (!granted) { setPermissionError(true); return; }
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording: rec } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
+      const { recording: rec } = await Audio.Recording.createAsync({
+        ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        isMeteringEnabled: true,
+      });
       avRecordingRef.current = rec;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
       startTimeRef.current = Date.now();
+      setLiveRecording(rec);
       setRecording(true);
       setDone(false);
       setSeconds(0);
@@ -147,6 +155,7 @@ export default function RecordScreen() {
       avRecordingRef.current = null;
       await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
       const dur = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+      setLiveRecording(null);
       setAudioFile({ name: "My Recording", duration: dur, uri: uri ?? "", source: "recorded" });
       setDone(true);
     } catch {
@@ -249,12 +258,13 @@ export default function RecordScreen() {
       <Text style={[styles.maxLabel, { color: colors.mutedForeground }]}>Max 60s</Text>
 
       <View style={styles.waveformSection}>
-        <WaveformVisualizer
+        <LiveWaveformVisualizer
           active={recording}
           color={recording ? colors.hot : done ? colors.success : colors.mutedForeground}
           barCount={50}
           height={100}
-          seed={77}
+          stream={liveStream}
+          recording={liveRecording}
         />
       </View>
 
