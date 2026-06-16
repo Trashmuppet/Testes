@@ -1,0 +1,10 @@
+Add functionality for users to create and share branded image cards
+
+Adds a ShareCardModal component and integrates it into the ResultScreen, enabling users to generate and share custom image cards. Updates dependencies to include `expo-sharing` and `react-native-view-shot`.
+
+Replit-Commit-Author: Agent
+Replit-Commit-Session-Id: cdbf1684-1729-45bb-b1a3-9f0f004af4b4
+Replit-Commit-Checkpoint-Type: full_checkpoint
+Replit-Commit-Event-Id: 359c2873-c2f6-4cad-a893-d22acbcc8cfe
+Replit-Commit-Screenshot-Url: https://storage.googleapis.com/screenshot-production-us-central1/d1f9696d-3e65-482b-aeb2-6c7fff32f86f/cdbf1684-1729-45bb-b1a3-9f0f004af4b4/edXbfwx
+Replit-Helium-Checkpoint-Created: true
