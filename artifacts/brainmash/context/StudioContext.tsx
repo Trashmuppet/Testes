@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { processAudio } from "@/lib/audioProcessor";
 
 // ─── Genre System ─────────────────────────────────────────────────────────────
 
@@ -127,7 +128,8 @@ export interface Creation {
   isLiked: boolean;
   username: string;
   waveformSeed: number;
-  audioUri: string;
+  audioUri: string;       // processed (transformed) audio
+  originalAudioUri: string; // raw recorded/imported audio
 }
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -177,6 +179,7 @@ function makeFeedCreations(): Creation[] {
     username: users[i % users.length],
     waveformSeed: (i * 12345 + 7) % 99999,
     audioUri: "",
+    originalAudioUri: "",
   }));
 }
 
@@ -202,23 +205,45 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
   const generate = useCallback(async () => {
     if (!audioFile) return;
     setGenerating(true);
-    await new Promise((r) => setTimeout(r, 4500));
-    const genre = GENRES.find((g) => g.id === selectedGenre)!;
-    const creation: Creation = {
-      id: Date.now().toString() + Math.random().toString(36).slice(2, 9),
-      name: `${audioFile.name} — ${genre.name}`,
-      genre: selectedGenre,
-      creativity,
-      duration: Math.min(60, audioFile.duration + 8),
-      createdAt: Date.now(),
-      likes: 0,
-      isLiked: false,
-      username: "you",
-      waveformSeed: Math.floor(Math.random() * 99999),
-      audioUri: audioFile.uri,
-    };
-    setCurrentCreation(creation);
-    setGenerating(false);
+    try {
+      const genre = GENRES.find((g) => g.id === selectedGenre)!;
+      const result = await processAudio(audioFile.uri, { genre: selectedGenre, creativity });
+      const creation: Creation = {
+        id: Date.now().toString() + Math.random().toString(36).slice(2, 9),
+        name: `${audioFile.name} — ${genre.name}`,
+        genre: selectedGenre,
+        creativity,
+        duration: result.durationSeconds,
+        createdAt: Date.now(),
+        likes: 0,
+        isLiked: false,
+        username: "you",
+        waveformSeed: Math.floor(Math.random() * 99999),
+        audioUri: result.processedUri,
+        originalAudioUri: audioFile.uri,
+      };
+      setCurrentCreation(creation);
+    } catch (err) {
+      // Fallback: if processing fails (e.g. browser security), pass through original
+      const genre = GENRES.find((g) => g.id === selectedGenre)!;
+      const creation: Creation = {
+        id: Date.now().toString() + Math.random().toString(36).slice(2, 9),
+        name: `${audioFile.name} — ${genre.name}`,
+        genre: selectedGenre,
+        creativity,
+        duration: audioFile.duration,
+        createdAt: Date.now(),
+        likes: 0,
+        isLiked: false,
+        username: "you",
+        waveformSeed: Math.floor(Math.random() * 99999),
+        audioUri: audioFile.uri,
+        originalAudioUri: audioFile.uri,
+      };
+      setCurrentCreation(creation);
+    } finally {
+      setGenerating(false);
+    }
   }, [audioFile, selectedGenre, creativity]);
 
   const saveCreation = useCallback((name: string) => {

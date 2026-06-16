@@ -25,6 +25,10 @@ function hasPlayableUri(uri: string | undefined): boolean {
   return uri.startsWith("file") || uri.startsWith("blob:") || uri.startsWith("http");
 }
 
+function getActiveUri(creation: { audioUri: string; originalAudioUri: string }, comparing: boolean): string {
+  return comparing ? (creation.originalAudioUri || creation.audioUri) : creation.audioUri;
+}
+
 const AUDIO_FORMATS = [
   { id: "wav", label: "WAV", icon: "file", desc: "Lossless" },
   { id: "mp3", label: "MP3", icon: "music", desc: "Compressed" },
@@ -58,26 +62,32 @@ export default function ResultScreen() {
   const bottomPad = IS_WEB ? 34 : insets.bottom;
 
   const genre = currentCreation ? GENRES.find((g) => g.id === currentCreation.genre)! : GENRES[0];
-  const hasRealAudio = hasPlayableUri(currentCreation?.audioUri);
+  const activeUri = currentCreation ? getActiveUri(currentCreation, comparing) : "";
+  const hasRealAudio = hasPlayableUri(activeUri);
 
   // ─── Web audio ────────────────────────────────────────────────────────────
-  const loadWebAudio = useCallback(() => {
-    if (!currentCreation?.audioUri || !hasRealAudio) return;
-    const audio = new (window as any).Audio(currentCreation.audioUri) as any;
-    audio.playbackRate = genre.rate;
+  const loadWebAudio = useCallback((uri: string, playbackRate: number) => {
+    if (!uri || !hasPlayableUri(uri)) return;
+    webAudioRef.current?.pause();
+    const audio = new (window as any).Audio(uri) as any;
+    audio.playbackRate = playbackRate;
     audio.onloadedmetadata = () => setDurationMs(Math.round(audio.duration * 1000));
     audio.onended = () => { setIsPlaying(false); audio.currentTime = 0; setPositionMs(0); };
     webAudioRef.current = audio;
-  }, [currentCreation?.audioUri, genre.rate, hasRealAudio]);
+    setPositionMs(0);
+    setDurationMs(0);
+  }, []);
 
   // ─── Native audio ─────────────────────────────────────────────────────────
-  const loadNativeAudio = useCallback(async () => {
-    if (!currentCreation?.audioUri || !hasRealAudio) return;
+  const loadNativeAudio = useCallback(async (uri: string, rate: number, pitchCorrection: boolean) => {
+    if (!uri || !hasPlayableUri(uri)) return;
     try {
+      await soundRef.current?.unloadAsync().catch(() => {});
+      soundRef.current = null;
       await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
       const { sound } = await Audio.Sound.createAsync(
-        { uri: currentCreation.audioUri },
-        { shouldPlay: false },
+        { uri },
+        { shouldPlay: false, rate, shouldCorrectPitch: pitchCorrection },
         (status: AVPlaybackStatus) => {
           if (status.isLoaded) {
             setPositionMs(status.positionMillis);
@@ -87,31 +97,32 @@ export default function ResultScreen() {
         }
       );
       soundRef.current = sound;
+      setPositionMs(0);
+      setDurationMs(0);
     } catch {}
-  }, [currentCreation?.audioUri, hasRealAudio]);
+  }, []);
 
+  // Reload audio whenever the active URI (or compare mode) changes
   useEffect(() => {
+    if (!currentCreation) return;
+    const uri = getActiveUri(currentCreation, comparing);
+    // In compare mode: play original at 1× speed, no pitch processing
+    // In generated mode: play processed audio at 1× (already time-stretched) — rate label is informational
+    const rate = 1.0;
+    const pitchCorrection = false;
+
     if (IS_WEB) {
-      loadWebAudio();
+      loadWebAudio(uri, rate);
       return () => {
         webAudioRef.current?.pause();
         webAudioRef.current = null;
         if (progressTimerRef.current) clearInterval(progressTimerRef.current);
       };
     }
-    loadNativeAudio();
+    void loadNativeAudio(uri, rate, pitchCorrection);
     return () => { soundRef.current?.unloadAsync().catch(() => {}); soundRef.current = null; };
-  }, [loadWebAudio, loadNativeAudio]);
-
-  useEffect(() => {
-    const rate = comparing ? 1.0 : genre.rate;
-    const pitch = comparing ? true : genre.pitchCorrection;
-    if (IS_WEB) {
-      if (webAudioRef.current) (webAudioRef.current as any).playbackRate = rate;
-    } else {
-      soundRef.current?.setRateAsync(rate, pitch).catch(() => {});
-    }
-  }, [comparing, genre]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comparing, currentCreation?.audioUri, currentCreation?.originalAudioUri]);
 
   const startProgressTimer = () => {
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
@@ -122,6 +133,18 @@ export default function ResultScreen() {
   };
   const stopProgressTimer = () => {
     if (progressTimerRef.current) { clearInterval(progressTimerRef.current); progressTimerRef.current = null; }
+  };
+
+  const stopPlayback = useCallback(() => {
+    if (IS_WEB) { webAudioRef.current?.pause(); stopProgressTimer(); }
+    else { soundRef.current?.pauseAsync().catch(() => {}); }
+    setIsPlaying(false);
+  }, []);
+
+  const handleCompareToggle = (val: boolean) => {
+    stopPlayback();
+    setPositionMs(0);
+    setComparing(val);
   };
 
   const handlePlayPause = async () => {
@@ -158,10 +181,7 @@ export default function ResultScreen() {
   };
 
   const handleRegenerate = async () => {
-    // Stop current playback
-    if (IS_WEB) { webAudioRef.current?.pause(); stopProgressTimer(); }
-    else { soundRef.current?.stopAsync().catch(() => {}); }
-    setIsPlaying(false);
+    stopPlayback();
     setPositionMs(0);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.back(); // go back to genre/creativity screen to regenerate
@@ -175,10 +195,10 @@ export default function ResultScreen() {
 
   const handleExport = (format: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (IS_WEB && hasRealAudio && currentCreation?.audioUri) {
+    if (IS_WEB && hasPlayableUri(currentCreation?.audioUri)) {
       const a = document.createElement("a");
-      a.href = currentCreation.audioUri;
-      a.download = `${creationName}.${format}`;
+      a.href = currentCreation!.audioUri;
+      a.download = `${creationName}.${format === "wav" ? "wav" : "webm"}`;
       a.click();
     }
     setExported(format);
@@ -186,8 +206,7 @@ export default function ResultScreen() {
   };
 
   const handleDone = () => {
-    if (IS_WEB) { webAudioRef.current?.pause(); stopProgressTimer(); }
-    else { soundRef.current?.stopAsync().catch(() => {}); }
+    stopPlayback();
     if (!saved) handleSave();
     reset();
     router.replace("/");
@@ -258,14 +277,14 @@ export default function ResultScreen() {
           {/* Compare toggle */}
           <View style={[styles.compareRow, { backgroundColor: colors.muted }]}>
             <Pressable
-              onPress={() => setComparing(false)}
+              onPress={() => handleCompareToggle(false)}
               style={[styles.compareBtn, !comparing && { backgroundColor: colors.card }]}
             >
               <Feather name="cpu" size={12} color={comparing ? colors.mutedForeground : genre.color} />
               <Text style={[styles.compareLabel, { color: comparing ? colors.mutedForeground : genre.color }]}>Generated</Text>
             </Pressable>
             <Pressable
-              onPress={() => setComparing(true)}
+              onPress={() => handleCompareToggle(true)}
               style={[styles.compareBtn, comparing && { backgroundColor: colors.card }]}
             >
               <Feather name="mic" size={12} color={comparing ? colors.accent : colors.mutedForeground} />
@@ -317,8 +336,8 @@ export default function ResultScreen() {
           {hasRealAudio && (
             <Text style={[styles.effectLabel, { color: colors.mutedForeground }]}>
               {comparing
-                ? "Original recording"
-                : `${genre.name} · ${genre.rate}× speed${genre.pitchCorrection ? " · pitch-locked" : ""}`}
+                ? "Original recording · unprocessed"
+                : `${genre.name} · DSP processed · ${genre.bpm}`}
             </Text>
           )}
         </View>
