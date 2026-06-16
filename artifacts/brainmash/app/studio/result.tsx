@@ -13,7 +13,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { WaveformVisualizer } from "@/components/WaveformVisualizer";
+import { PlaybackWaveformVisualizer } from "@/components/PlaybackWaveformVisualizer";
 import { ShareCardModal } from "@/components/ShareCardModal";
 import { useColors } from "@/hooks/useColors";
 import { GENRES, useStudio } from "@/context/StudioContext";
@@ -53,6 +53,8 @@ export default function ResultScreen() {
   const [exported, setExported] = useState<string | null>(null);
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
+  // State mirror of webAudioRef so PlaybackWaveformVisualizer re-renders on swap
+  const [webAudioElement, setWebAudioElement] = useState<HTMLAudioElement | null>(null);
 
   const soundRef = useRef<Audio.Sound | null>(null);
   const webAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -74,6 +76,7 @@ export default function ResultScreen() {
     audio.onloadedmetadata = () => setDurationMs(Math.round(audio.duration * 1000));
     audio.onended = () => { setIsPlaying(false); audio.currentTime = 0; setPositionMs(0); };
     webAudioRef.current = audio;
+    setWebAudioElement(audio as HTMLAudioElement);
     setPositionMs(0);
     setDurationMs(0);
   }, []);
@@ -293,12 +296,13 @@ export default function ResultScreen() {
           </View>
 
           <View style={{ marginBottom: 12 }}>
-            <WaveformVisualizer
-              active={isPlaying}
+            <PlaybackWaveformVisualizer
+              isPlaying={isPlaying}
               color={comparing ? colors.accent : genre.color}
               barCount={44}
               height={80}
               seed={comparing ? 22 : currentCreation.waveformSeed}
+              audioElement={IS_WEB ? webAudioElement : undefined}
             />
           </View>
 
